@@ -1,0 +1,166 @@
+#!/bin/bash
+
+# Skript zum einmaligen Erstanmelden der Benutzer im CIP-Pool
+
+#-------------------------------------------------------------------------------
+# Coloured output using "tput"
+# Usage: put COLOR TEXT
+put () {
+    local reset="$(tput sgr0)"
+    local color="$1"
+    local label="$2"
+    case "$color" in
+        green)  color="$(tput setaf 2)" ;;
+        red)    color="$(tput setaf 1)" ;;
+        blue)   color="$(tput setaf 4)" ;;
+        *)	color="" ;;
+    esac
+    echo "${color}$2${reset}"
+}
+#-------------------------------------------------------------------------------
+
+
+#-------------------------------------------------------------------------------
+# Local file with current user data
+# This file gets updated every hour by an entry in /etc/crontab
+users="/usr/share/rrzk_user_list"
+#-------------------------------------------------------------------------------
+
+
+#-------------------------------------------------------------------------------
+# Main function to register a new user
+erstanmeldung () {
+
+# Get user name from first argument
+local user="$1"	
+
+if [[ $users_db_exist = "yes" ]]; then
+	# Show SSH password hint if username checked
+	echo "$(tput setaf 4)   Hinweis: $(tput sgr0)Die Meldung \"Permission denied, please try again.\" erscheint nur bei einer falschen Passworteingabe."
+	echo
+	echo "            Bitte überprüfe sorgfältig die Passwort-Symbole und stelle sicher, dass sie den Tasten der Tastatur auch entsprechen."
+fi
+
+echo
+
+# Start an SSH-Session with the AFS server
+# Execute following commands in the user shell environment
+ssh "$user@afshost.localdomain" '
+
+echo
+
+#--------------------------------------
+echo "   Aktualisiere die Benutzerumgebung... "
+for dotfile in ~/{.xsession,.bashrc,.profile}; do
+    [[ -f $dotfile ]] && mv "$dotfile" "$dotfile"_old #alte .profile verhindert die Anmeldung, deswegen wird sie verschoben
+done
+#--------------------------------------
+
+echo
+
+#--------------------------------------
+ #   Räume auf..."
+for firefox_clutter in ~/.mozilla/firefox/*.default/{crashes,datareporting,minidumps,saved-telemetry-pings,places.sqlite.corrupt}; do
+    if [[ -d $firefox_clutter ]]; then
+        rm -r "$firefox_clutter"
+    elif [[ -f $firefox_clutter ]]; then
+        rm -f "$firefox_clutter"
+    fi
+done
+
+rm -rf ~/.kde
+rm -rf ~/.kde4
+
+#--------------------------------------
+
+echo
+
+'
+}
+#-------------------------------------------------------------------------------
+
+echo 
+
+#-------------------------------------------------------------------------------
+# CIP-Pool employee password prompt
+read -p "SHK-Passwort: " -s pass
+ 
+echo    # Newline
+
+# Generate hash from the input
+hash="$(echo "$pass" | openssl dgst -sha256)"
+ 
+# Hash of the original password
+orig_hash="(stdin)= MY_SHA_256_HASH"
+
+# Compare generated and original hashes
+if [[ ! $hash = $orig_hash ]]; then 
+	echo
+	put red "   E: Falsches Passwort, bitte versuche es erneut."
+	echo
+	exit 1
+fi
+#-------------------------------------------------------------------------------
+
+echo
+
+#-------------------------------------------------------------------------------
+# Prompt for a username of the new CIP user
+read -p "Benutzername: " name
+
+# Empty input is not allowed
+if [[ -z $name ]]; then 
+	echo
+	put red "   E: Benutzername fehlt!"
+	echo
+	exit 1
+fi
+#-------------------------------------------------------------------------------
+
+echo
+
+#-------------------------------------------------------------------------------
+# Lookup a username in a local database
+if [[ -f $users ]]; then
+	
+	# This parameter gets evaluated in the "erstanmeldung" function
+	users_db_exist="yes"
+
+	# Check if the username is in the RRZK database 
+	if grep -w "$name" "$users" &> /dev/null; then
+		put green "   Benutzer \"$name\" ist in AFS registriert."
+	else 
+		put red "   E: Benutzer \"$name\" konnte nicht gefunden werden!"
+		echo
+		echo "   Bitte Benutzername überprüfen und ggf. das Rechenzentrum kontaktieren."
+		echo
+		echo "   Siehe auch: $(tput setaf 4)https://AFS_HELPDESK_URL$(tput sgr0) (Ctrl + Click zum Öffnen im Browser)"
+		echo
+		exit 1 
+	fi
+else
+	users_db_exist="no"
+
+	put red "   E: Benutzerliste nicht gefunden!"
+	echo
+	echo "   Der Benutzer-Eintrag in der AFS-Datenbank kann nicht gefunden werden."
+	echo
+	echo "   Erstanmeldung wird trotzdem initiiert."
+	echo
+	echo "   Bitte dieses Problem dem Admin-Team unter ADMIN_TEAM@localdomain melden."
+	echo
+fi
+#-------------------------------------------------------------------------------
+
+echo
+
+#-------------------------------------------------------------------------------
+# Register the new user
+if erstanmeldung "$name"; then
+	echo "   ---"
+	echo
+	put green "   Erstanmeldung erfolgreich!"
+	echo
+	exit 0
+fi
+#-------------------------------------------------------------------------------
